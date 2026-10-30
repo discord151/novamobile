@@ -6,17 +6,22 @@ import android.provider.ContactsContract
 data class ContactMatch(val name: String, val number: String, val score: Double)
 
 object ContactResolver {
-
-    // Vosk's small English model mishears many names. Map "what Vosk hears" -> "contact name".
-    // Example: "rahool" to "Rahul"
-    val ALIASES: Map<String, String> = mapOf(
-        // "mom" to "Mummy",
-    )
-
+    const val KEY_ALIASES = "aliases"   // lines like  rule=Rahul
     private const val MIN_SCORE = 0.6
 
+    private fun aliasFor(ctx: Context, spoken: String): String? {
+        val raw = ctx.getSharedPreferences(ListenerService.PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_ALIASES, "") ?: ""
+        val key = Fuzzy.normalize(spoken)
+        for (line in raw.lines()) {
+            val parts = line.split("=", limit = 2)
+            if (parts.size == 2 && Fuzzy.normalize(parts[0]) == key) return parts[1].trim()
+        }
+        return null
+    }
+
     fun find(ctx: Context, spokenRaw: String): ContactMatch? {
-        val spoken = normalize(ALIASES[spokenRaw.lowercase().trim()] ?: spokenRaw)
+        val spoken = Fuzzy.normalize(aliasFor(ctx, spokenRaw) ?: spokenRaw)
         if (spoken.isEmpty()) return null
 
         var best: ContactMatch? = null
@@ -33,43 +38,22 @@ object ContactResolver {
             while (it.moveToNext()) {
                 val name = it.getString(0) ?: continue
                 val number = it.getString(1) ?: continue
-                val s = score(spoken, normalize(name))
+                val s = score(spoken, Fuzzy.normalize(name))
                 if (s > (best?.score ?: 0.0)) best = ContactMatch(name, number, s)
             }
         }
         return best?.takeIf { it.score >= MIN_SCORE }
     }
 
-    private fun normalize(s: String) =
-        s.lowercase().replace(Regex("[^a-z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
-
     private fun score(spoken: String, name: String): Double {
         if (spoken == name) return 1.0
-        var best = similarity(spoken, name)
-        // match against single words too (so "rahul" matches "Rahul Sharma")
-        for (w in name.split(" ")) {
-            if (w == spoken) best = maxOf(best, 0.95)
-            else best = maxOf(best, similarity(spoken, w) * 0.95)
+        val spSk = Fuzzy.skeleton(spoken)
+        var best = Fuzzy.similarity(spoken, name)
+        for (w in name.split(" ") + name) {
+            val textSim = if (w == spoken) 0.97 else Fuzzy.similarity(spoken, w) * 0.95
+            val skSim = if (spSk.length >= 2) Fuzzy.similarity(spSk, Fuzzy.skeleton(w)) * 0.9 else 0.0
+            best = maxOf(best, textSim, skSim)
         }
         return best
-    }
-
-    private fun similarity(a: String, b: String): Double {
-        if (a.isEmpty() || b.isEmpty()) return 0.0
-        return 1.0 - levenshtein(a, b).toDouble() / maxOf(a.length, b.length)
-    }
-
-    private fun levenshtein(a: String, b: String): Int {
-        val dp = IntArray(b.length + 1) { it }
-        for (i in 1..a.length) {
-            var prev = dp[0]
-            dp[0] = i
-            for (j in 1..b.length) {
-                val tmp = dp[j]
-                dp[j] = minOf(dp[j] + 1, dp[j - 1] + 1, prev + if (a[i - 1] == b[j - 1]) 0 else 1)
-                prev = tmp
-            }
-        }
-        return dp[b.length]
     }
 }

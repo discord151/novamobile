@@ -25,3 +25,11 @@ The phone is NOT unlocked; only the call is placed. Nothing listens until you cl
 Push this folder to a GitHub repo -> Actions tab -> "Build APK" (runs automatically) ->
 open the finished run -> download the `NovaMobile-debug-apk` artifact -> unzip -> install app-debug.apk.
 The workflow downloads the Vosk model for you, so skip step 2 of Setup.
+
+## Unlock + open apps (added)
+- Say "unlock", "open WhatsApp", or "unlock and open WhatsApp" after the earbud triple-click.
+- "call ..." never unlocks the phone.
+- Setup: install -> Settings > Apps > Nova Mobile > ⋮ > "Allow restricted settings" -> in the app tap
+  "Open accessibility settings" and switch on "Nova Mobile unlock" -> type your PIN in the app and Save.
+- The PIN is encrypted with the Android Keystore. Never share it in chat.
+- If a name isn't recognised, look at "Last heard" in the app and add a line "heard=Contact name" under name fixes.

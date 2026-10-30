@@ -214,10 +214,11 @@ class ListenerService : Service(), RecognitionListener {
         val text = try { JSONObject(hypothesis ?: return).optString("text") } catch (e: Exception) { return }
         if (text.isBlank()) return
         Log.d(TAG, "Heard: $text")
+        prefs.edit().putString("last_heard", text).apply()
         main.post {
             endListening()
             val cmd = CommandParser.parse(text)
-            if (cmd == null) say("Say call, then a name") else handle(cmd)
+            if (cmd == null) say("I heard $text. Say call, unlock, or open") else handle(cmd)
         }
     }
 
@@ -249,20 +250,43 @@ class ListenerService : Service(), RecognitionListener {
 
     // ---------- commands ----------
     private fun handle(cmd: Command) {
-        if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
-            say("I don't have permission to place calls"); return
-        }
         when (cmd) {
-            is Command.CallNumber -> placeCall(cmd.number, cmd.number.chunked(1).joinToString(" "))
+            is Command.CallNumber -> if (canCall()) placeCall(cmd.number, cmd.number.chunked(1).joinToString(" "))
             is Command.CallName -> {
+                if (!canCall()) return
                 if (checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
                     say("I don't have permission to read contacts"); return
                 }
                 val match = ContactResolver.find(this, cmd.name)
-                if (match == null) say("I couldn't find ${cmd.name} in your contacts")
+                if (match == null) say("I heard ${cmd.name}, but no contact matches")
                 else placeCall(match.number, match.name)
             }
+            Command.Unlock -> doUnlock { say("Unlocked") }
+            is Command.OpenApp -> {
+                val app = AppResolver.find(this, cmd.name)
+                if (app == null) { say("I couldn't find an app called ${cmd.name}"); return }
+                doUnlock { UnlockService.instance?.launch(app.second) }
+            }
         }
+    }
+
+    private fun canCall(): Boolean {
+        val ok = checkSelfPermission(Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
+        if (!ok) say("I don't have permission to place calls")
+        return ok
+    }
+
+    /** Runs [then] once the phone is unlocked (immediately if it already is). */
+    private fun doUnlock(then: () -> Unit) {
+        val svc = UnlockService.instance
+        if (svc == null) { say("Turn on the Nova unlock service in accessibility settings"); return }
+        if (!svc.isLocked()) { then(); return }
+        val pin = PinStore.load(this)
+        if (pin == null) { say("Save your unlock PIN in the app first"); return }
+        say("Unlocking")
+        main.postDelayed({
+            svc.unlock(pin) { ok -> if (ok) then() else say("I couldn't unlock the phone") }
+        }, 1000)
     }
 
     private fun placeCall(number: String, spokenName: String) {
